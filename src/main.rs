@@ -6,8 +6,6 @@ extern crate derive_more;
 use bytes::BytesMut;
 use env_logger::{Builder, Env};
 use futures::future;
-use futures::stream::StreamExt;
-use futures::FutureExt;
 use handlebars::Handlebars;
 use http::header::{HeaderMap, HeaderValue};
 use http::status::StatusCode;
@@ -25,6 +23,7 @@ use structopt::StructOpt;
 use tokio::codec::{BytesCodec, FramedRead};
 use tokio::fs::File;
 use tokio::runtime::Runtime;
+use tokio::prelude::*;
 
 // Developer extensions. These are contained in their own module so that the
 // principle HTTP server behavior is not obscured.
@@ -101,7 +100,7 @@ fn run() -> Result<()> {
 
             // Handle the request, returning a Future of Response,
             // and map it to a Future of Result of Response.
-            serve(config, req).map(Ok::<_, Error>)
+            futures::FutureExt::map(serve(config, req), Ok::<_, Error>)
         });
 
         // Convert the concrete (non-future) service function to a Future of Result.

@@ -5,7 +5,7 @@
 
 use super::{Config, HtmlCfg};
 use comrak::ComrakOptions;
-use futures::{future, StreamExt};
+use futures::future;
 use http::{Request, Response, StatusCode};
 use hyper::{header, Body};
 use log::{trace, warn};
@@ -16,6 +16,7 @@ use std::fmt::Write;
 use std::io;
 use std::path::{Path, PathBuf};
 use tokio_fs::DirEntry;
+use tokio::prelude::*;
 
 /// The entry point to extensions. Extensions are given both the request and the
 /// response result from regular file serving, and have the opportunity to
