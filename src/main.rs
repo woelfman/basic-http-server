@@ -74,8 +74,8 @@ fn run() -> Result<()> {
     // the environment contains `RUST_LOG`.
     let env = Env::new().default_filter_or("basic_http_server=info");
     Builder::from_env(env)
-        .default_format_module_path(false)
-        .default_format_timestamp(false)
+        .format_target(false)
+        .format_timestamp(None)
         .init();
 
     // Create the configuration from the command line arguments. It

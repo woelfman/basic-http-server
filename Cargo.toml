@@ -14,7 +14,7 @@ bytes = "0.4.12"
 clap = "2.33.0"
 comrak = "0.14"
 derive_more = "0.15.0"
-env_logger = "0.6.2"
+env_logger = "0.9.1"
 handlebars = "1.1.0"
 http = "0.1.19"
 hyper = { version = "0.13.0-alpha.4", features = ["unstable-stream"] }
