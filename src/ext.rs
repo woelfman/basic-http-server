@@ -68,14 +68,14 @@ pub async fn serve(
 async fn md_path_to_html(path: &Path) -> Result<Response<Body>> {
     // Render Markdown like GitHub
     let mut options = ComrakOptions::default();
-    options.ext_autolink = true;
-    options.ext_header_ids = None;
-    options.ext_table = true;
-    options.ext_strikethrough = true;
-    options.ext_tagfilter = true;
-    options.ext_tasklist = true;
-    options.github_pre_lang = true;
-    options.ext_header_ids = Some("user-content-".to_string());
+    options.extension.autolink = true;
+    options.extension.header_ids = None;
+    options.extension.table = true;
+    options.extension.strikethrough = true;
+    options.extension.tagfilter = true;
+    options.extension.tasklist = true;
+    options.render.github_pre_lang = true;
+    options.extension.header_ids = Some("user-content-".to_string());
 
     let buf = tokio::fs::read(path).await?;
     let s = String::from_utf8(buf).map_err(|_| Error::MarkdownUtf8)?;
