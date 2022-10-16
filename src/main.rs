@@ -3,7 +3,7 @@
 #[macro_use]
 extern crate derive_more;
 
-use bytes::BytesMut;
+
 use env_logger::{Builder, Env};
 use futures::future;
 use handlebars::Handlebars;
@@ -20,18 +20,17 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
-use tokio::codec::{BytesCodec, FramedRead};
+use tokio_util::codec::{BytesCodec, FramedRead};
 use tokio::fs::File;
-use tokio::runtime::Runtime;
-use tokio::prelude::*;
 
 // Developer extensions. These are contained in their own module so that the
 // principle HTTP server behavior is not obscured.
 mod ext;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // Set up error handling immediately
-    if let Err(e) = run() {
+    if let Err(e) = run().await {
         log_error_chain(&e);
     }
 }
@@ -69,7 +68,7 @@ pub struct Config {
     use_extensions: bool,
 }
 
-fn run() -> Result<()> {
+async fn run() -> Result<()> {
     // Initialize logging, and log the "info" level for this crate only, unless
     // the environment contains `RUST_LOG`.
     let env = Env::new().default_filter_or("basic_http_server=info");
@@ -111,9 +110,8 @@ fn run() -> Result<()> {
     // our service builder.
     let server = Server::bind(&config.addr).serve(make_service);
 
-    // Create a Tokio runtime and block on Hyper forever.
-    let rt = Runtime::new()?;
-    rt.block_on(server)?;
+    // And run forever...
+    server.await?;
 
     Ok(())
 }
@@ -232,7 +230,6 @@ async fn respond_with_file(path: PathBuf) -> Result<Response<Body>> {
 
     let codec = BytesCodec::new();
     let stream = FramedRead::new(file, codec);
-    let stream = stream.map(|b| b.map(BytesMut::freeze));
     let body = Body::wrap_stream(stream);
 
     let resp = Response::builder()

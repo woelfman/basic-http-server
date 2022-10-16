@@ -5,7 +5,7 @@
 
 use super::{Config, HtmlCfg};
 use comrak::ComrakOptions;
-use futures::future;
+
 use http::{Request, Response, StatusCode};
 use hyper::{header, Body};
 use log::{trace, warn};
@@ -15,8 +15,7 @@ use std::ffi::OsStr;
 use std::fmt::Write;
 use std::io;
 use std::path::{Path, PathBuf};
-use tokio_fs::DirEntry;
-use tokio::prelude::*;
+
 
 /// The entry point to extensions. Extensions are given both the request and the
 /// response result from regular file serving, and have the opportunity to
@@ -173,16 +172,13 @@ async fn maybe_list_dir(root_dir: &Path, path: &Path) -> Result<Option<Response<
 async fn list_dir(root_dir: &Path, path: &Path) -> Result<Response<Body>> {
     let up_dir = path.join("..");
     let path = path.to_owned();
-    let dents = tokio::fs::read_dir(path).await?;
-    let dents = dents.filter_map(|dent| match dent {
-        Ok(dent) => future::ready(Some(dent)),
-        Err(e) => {
-            warn!("directory entry error: {}", e);
-            future::ready(None)
+    let mut dents = tokio::fs::read_dir(path).await?;
+    let mut paths: Vec<PathBuf> = Vec::new();
+    while let Ok(e) = dents.next_entry().await {
+        if let Some(e) = e {
+            paths.push(e.path());
         }
-    });
-    let paths = dents.map(|dent| DirEntry::path(&dent));
-    let mut paths: Vec<_> = paths.collect().await;
+    }
     paths.sort();
     let paths = Some(up_dir).into_iter().chain(paths);
     let paths: Vec<_> = paths.collect();
