@@ -17,7 +17,7 @@ derive_more = "0.15.0"
 env_logger = "0.9.1"
 handlebars = "1.1.0"
 http = "0.2.8"
-hyper = { version = "0.14", features = ["stream", "server", "tcp", "http2"] }
+hyper = { version = "0.14", features = ["stream", "server", "tcp", "http1"] }
 log = "0.4.8"
 mime = "0.3.14"
 mime_guess = "2.0.1"
