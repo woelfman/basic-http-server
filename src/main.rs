@@ -3,7 +3,6 @@
 #[macro_use]
 extern crate derive_more;
 
-
 use env_logger::{Builder, Env};
 use futures::future;
 use handlebars::Handlebars;
@@ -20,8 +19,8 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
-use tokio_util::codec::{BytesCodec, FramedRead};
 use tokio::fs::File;
+use tokio_util::codec::{BytesCodec, FramedRead};
 
 // Developer extensions. These are contained in their own module so that the
 // principle HTTP server behavior is not obscured.
@@ -125,9 +124,7 @@ async fn serve(config: Config, req: Request<Body>) -> Response<Body> {
     let resp = serve_or_error(config, req).await;
 
     // Transform internal errors to error responses.
-    let resp = transform_error(resp);
-
-    resp
+    transform_error(resp)
 }
 
 /// Handle all types of requests, but don't deal with transforming internal
@@ -143,25 +140,23 @@ async fn serve_or_error(config: Config, req: Request<Body>) -> Result<Response<B
     let resp = serve_file(&req, &config.root_dir).await;
 
     // Give developer extensions an opportunity to post-process the request/response pair.
-    let resp = ext::serve(config, req, resp).await;
-
-    resp
+    ext::serve(config, req, resp).await
 }
 
 /// Serve static files from a root directory.
-async fn serve_file(req: &Request<Body>, root_dir: &PathBuf) -> Result<Response<Body>> {
+async fn serve_file(req: &Request<Body>, root_dir: &Path) -> Result<Response<Body>> {
     // First, try to do a redirect. If that doesn't happen, then find the path
     // to the static file we want to serve - which may be `index.html` for
     // directories - and send a response containing that file.
-    let maybe_redir_resp = try_dir_redirect(req, &root_dir)?;
+    let maybe_redir_resp = try_dir_redirect(req, root_dir)?;
 
     if let Some(redir_resp) = maybe_redir_resp {
         return Ok(redir_resp);
     }
 
-    let path = local_path_with_maybe_index(req.uri(), &root_dir)?;
+    let path = local_path_with_maybe_index(req.uri(), root_dir)?;
 
-    Ok(respond_with_file(path).await?)
+    respond_with_file(path).await
 }
 
 /// Try to do a 302 redirect for directories.
@@ -179,8 +174,8 @@ async fn serve_file(req: &Request<Body>, root_dir: &PathBuf) -> Result<Response<
 /// the case for URL `docs/`.
 ///
 /// This seems to match the behavior of other static web servers.
-fn try_dir_redirect(req: &Request<Body>, root_dir: &PathBuf) -> Result<Option<Response<Body>>> {
-    if req.uri().path().ends_with("/") {
+fn try_dir_redirect(req: &Request<Body>, root_dir: &Path) -> Result<Option<Response<Body>>> {
+    if req.uri().path().ends_with('/') {
         return Ok(None);
     }
 
@@ -193,9 +188,9 @@ fn try_dir_redirect(req: &Request<Body>, root_dir: &PathBuf) -> Result<Option<Re
     }
 
     let mut new_loc = req.uri().path().to_string();
-    new_loc.push_str("/");
+    new_loc.push('/');
     if let Some(query) = req.uri().query() {
-        new_loc.push_str("?");
+        new_loc.push('?');
         new_loc.push_str(query);
     }
 
@@ -275,7 +270,7 @@ fn local_path_for_request(uri: &Uri, root_dir: &Path) -> Result<PathBuf> {
     let request_path = &request_path[0..end];
 
     // Convert %-encoding to actual values
-    let decoded = percent_decode_str(&request_path);
+    let decoded = percent_decode_str(request_path);
     let request_path = if let Ok(p) = decoded.decode_utf8() {
         p
     } else {
@@ -285,8 +280,8 @@ fn local_path_for_request(uri: &Uri, root_dir: &Path) -> Result<PathBuf> {
 
     // Append the requested path to the root directory
     let mut path = root_dir.to_owned();
-    if request_path.starts_with('/') {
-        path.push(&request_path[1..]);
+    if let Some(request_path) = request_path.strip_prefix('/') {
+        path.push(request_path);
     } else {
         warn!("found non-absolute path {}", request_path);
         return Err(Error::UriNotAbsolute);
@@ -401,7 +396,9 @@ fn html_str_to_response_with_headers(
 ) -> Result<Response<Body>> {
     let mut builder = Response::builder();
 
-    builder.headers_mut().map(|h| h.extend(headers));
+    if let Some(h) = builder.headers_mut() {
+        h.extend(headers)
+    }
 
     builder
         .status(status)

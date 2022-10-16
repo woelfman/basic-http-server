@@ -16,7 +16,6 @@ use std::fmt::Write;
 use std::io;
 use std::path::{Path, PathBuf};
 
-
 /// The entry point to extensions. Extensions are given both the request and the
 /// response result from regular file serving, and have the opportunity to
 /// replace the response with their own response.
@@ -31,7 +30,7 @@ pub async fn serve(
         return resp;
     }
 
-    let path = super::local_path_for_request(&req.uri(), &config.root_dir)?;
+    let path = super::local_path_for_request(req.uri(), &config.root_dir)?;
     let file_ext = path.extension().and_then(OsStr::to_str).unwrap_or("");
 
     if file_ext == "md" {
@@ -120,7 +119,7 @@ fn maybe_convert_mime_type_to_text(req: &Request<Body>, resp: &mut Response<Body
 }
 
 #[rustfmt::skip]
-static TEXT_EXTENSIONS: &[&'static str] = &[
+static TEXT_EXTENSIONS: &[&str] = &[
     "c",
     "cc",
     "cpp",
@@ -141,7 +140,7 @@ static TEXT_EXTENSIONS: &[&'static str] = &[
 ];
 
 #[rustfmt::skip]
-static TEXT_FILES: &[&'static str] = &[
+static TEXT_FILES: &[&str] = &[
     ".gitattributes",
     ".gitignore",
     ".mailmap",
@@ -162,7 +161,7 @@ static TEXT_FILES: &[&'static str] = &[
 async fn maybe_list_dir(root_dir: &Path, path: &Path) -> Result<Option<Response<Body>>> {
     let meta = tokio::fs::metadata(path).await?;
     if meta.is_dir() {
-        Ok(Some(list_dir(&root_dir, path).await?))
+        Ok(Some(list_dir(root_dir, path).await?))
     } else {
         Ok(None)
     }
@@ -182,7 +181,7 @@ async fn list_dir(root_dir: &Path, path: &Path) -> Result<Response<Body>> {
     paths.sort();
     let paths = Some(up_dir).into_iter().chain(paths);
     let paths: Vec<_> = paths.collect();
-    let html = make_dir_list_body(&root_dir, &paths)?;
+    let html = make_dir_list_body(root_dir, &paths)?;
     let resp = super::html_str_to_response(html, StatusCode::OK)?;
     Ok(resp)
 }
@@ -214,7 +213,7 @@ fn make_dir_list_body(root_dir: &Path, paths: &[PathBuf]) -> Result<String> {
                         &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
                     const PATH_SET: &AsciiSet =
                         &FRAGMENT_SET.add(b'#').add(b'?').add(b'{').add(b'}');
-                    let full_url = utf8_percent_encode(full_url, &PATH_SET);
+                    let full_url = utf8_percent_encode(full_url, PATH_SET);
 
                     // TODO: Make this a relative URL
                     writeln!(buf, "<div><a href='/{}'>{}</a></div>", full_url, file_name)
