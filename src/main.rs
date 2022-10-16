@@ -3,6 +3,7 @@
 #[macro_use]
 extern crate derive_more;
 
+use clap::Parser;
 use env_logger::{Builder, Env};
 use futures::future;
 use handlebars::Handlebars;
@@ -18,7 +19,6 @@ use std::error::Error as StdError;
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use structopt::StructOpt;
 use tokio::fs::File;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
@@ -45,25 +45,24 @@ fn log_error_chain(mut e: &dyn StdError) {
 }
 
 /// The configuration object, parsed from command line options.
-#[derive(Clone, StructOpt)]
-#[structopt(about = "A basic HTTP file server")]
+#[derive(Clone, Parser)]
+#[command(about = "A basic HTTP file server")]
 pub struct Config {
     /// The IP:PORT combination.
-    #[structopt(
+    #[arg(
         name = "ADDR",
-        short = "a",
+        short = 'a',
         long = "addr",
-        parse(try_from_str),
         default_value = "127.0.0.1:4000"
     )]
     addr: SocketAddr,
 
     /// The root directory for serving files.
-    #[structopt(name = "ROOT", parse(from_os_str), default_value = ".")]
+    #[structopt(name = "ROOT", default_value = ".")]
     root_dir: PathBuf,
 
     /// Enable developer extensions.
-    #[structopt(short = "x")]
+    #[structopt(short = 'x')]
     use_extensions: bool,
 }
 
@@ -79,7 +78,7 @@ async fn run() -> Result<()> {
     // Create the configuration from the command line arguments. It
     // includes the IP address and port to listen on and the path to use
     // as the HTTP server's root directory.
-    let config = Config::from_args();
+    let config = Config::parse();
 
     // Display the configuration to be helpful
     info!("basic-http-server {}", env!("CARGO_PKG_VERSION"));
