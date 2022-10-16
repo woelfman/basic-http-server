@@ -15,7 +15,7 @@ clap = { version = "4.0.0", features = ["derive"] }
 comrak = "0.14"
 derive_more = "0.99.17"
 env_logger = "0.9.1"
-handlebars = "1.1.0"
+handlebars = "4.3.5"
 http = "0.2.8"
 hyper = { version = "0.14", features = ["stream", "server", "tcp", "http1"] }
 log = "0.4.8"

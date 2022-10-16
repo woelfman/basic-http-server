@@ -476,7 +476,7 @@ pub enum Error {
     AddrParse(std::net::AddrParseError),
 
     #[display(fmt = "failed to render template")]
-    TemplateRender(handlebars::TemplateRenderError),
+    TemplateRender(handlebars::RenderError),
 
     #[display(fmt = "requested URI is not an absolute path")]
     UriNotAbsolute,
