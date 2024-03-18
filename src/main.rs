@@ -8,13 +8,13 @@ use env_logger::{Builder, Env};
 use futures::TryStreamExt;
 use handlebars::Handlebars;
 use http::{StatusCode, Uri};
-use http_body_util::{combinators::BoxBody, BodyExt};
 use http_body_util::{Empty, StreamBody};
+use http_body_util::{combinators::BoxBody, BodyExt};
+use hyper::Method;
 use hyper::body::{Bytes, Frame, Incoming};
 use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::Method;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use log::{debug, error, info, trace, warn};
@@ -26,6 +26,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tokio::fs::File;
 use tokio::net::TcpListener;
+use tokio::signal;
 use tokio_util::io::ReaderStream;
 
 // Developer extensions. These are contained in their own module so that the
@@ -35,8 +36,13 @@ mod ext;
 #[tokio::main]
 async fn main() {
     // Set up error handling immediately
-    if let Err(e) = run().await {
-        log_error_chain(&e);
+    tokio::select! {
+        _ = signal::ctrl_c() => {}
+        o = run() => {
+            if let Err(e) = o {
+                log_error_chain(&e);
+            }
+        }
     }
 }
 
