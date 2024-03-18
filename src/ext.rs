@@ -6,8 +6,12 @@
 use super::{Config, HtmlCfg};
 use comrak::ComrakOptions;
 
-use http::{Request, Response, StatusCode};
-use hyper::{header, Body};
+use http::StatusCode;
+use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyExt, Full};
+use hyper::body::{Bytes, Incoming};
+use hyper::header;
+use hyper::{Request, Response};
 use log::{trace, warn};
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use std::error::Error as StdError;
@@ -21,9 +25,9 @@ use std::path::{Path, PathBuf};
 /// replace the response with their own response.
 pub async fn serve(
     config: Config,
-    req: Request<Body>,
-    resp: super::Result<Response<Body>>,
-) -> super::Result<Response<Body>> {
+    req: Request<Incoming>,
+    resp: super::Result<Response<BoxBody<Bytes, super::Error>>>,
+) -> super::Result<Response<BoxBody<Bytes, super::Error>>> {
     trace!("checking extensions");
 
     if !config.use_extensions {
@@ -63,7 +67,7 @@ pub async fn serve(
 }
 
 /// Load a markdown file, render to HTML, and return the response.
-async fn md_path_to_html(path: &Path) -> Result<Response<Body>> {
+async fn md_path_to_html(path: &Path) -> Result<Response<BoxBody<Bytes, super::Error>>> {
     // Render Markdown like GitHub
     let mut options = ComrakOptions::default();
     options.extension.autolink = true;
@@ -88,11 +92,18 @@ async fn md_path_to_html(path: &Path) -> Result<Response<Body>> {
         .status(StatusCode::OK)
         .header(header::CONTENT_LENGTH, html.len() as u64)
         .header(header::CONTENT_TYPE, mime::TEXT_HTML.as_ref())
-        .body(Body::from(html))
+        .body(
+            Full::new(html.into())
+                .map_err(|never| match never {})
+                .boxed(),
+        )
         .map_err(Error::from)
 }
 
-fn maybe_convert_mime_type_to_text(req: &Request<Body>, resp: &mut Response<Body>) {
+fn maybe_convert_mime_type_to_text(
+    req: &Request<Incoming>,
+    resp: &mut Response<BoxBody<Bytes, super::Error>>,
+) {
     let path = req.uri().path();
     let file_name = path.rsplit('/').next();
     if let Some(file_name) = file_name {
@@ -158,7 +169,10 @@ static TEXT_FILES: &[&str] = &[
 ];
 
 /// Try to treat the path as a directory and list the contents as HTML.
-async fn maybe_list_dir(root_dir: &Path, path: &Path) -> Result<Option<Response<Body>>> {
+async fn maybe_list_dir(
+    root_dir: &Path,
+    path: &Path,
+) -> Result<Option<Response<BoxBody<Bytes, super::Error>>>> {
     let meta = tokio::fs::metadata(path).await?;
     if meta.is_dir() {
         Ok(Some(list_dir(root_dir, path).await?))
@@ -168,7 +182,7 @@ async fn maybe_list_dir(root_dir: &Path, path: &Path) -> Result<Option<Response<
 }
 
 /// List the contents of a directory as HTML.
-async fn list_dir(root_dir: &Path, path: &Path) -> Result<Response<Body>> {
+async fn list_dir(root_dir: &Path, path: &Path) -> Result<Response<BoxBody<Bytes, super::Error>>> {
     let up_dir = path.join("..");
     let path = path.to_owned();
     let mut dents = tokio::fs::read_dir(path).await?;

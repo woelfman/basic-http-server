@@ -5,13 +5,18 @@ extern crate derive_more;
 
 use clap::Parser;
 use env_logger::{Builder, Env};
-use futures::future;
+use futures::TryStreamExt;
 use handlebars::Handlebars;
-use http::header::{HeaderMap, HeaderValue};
-use http::status::StatusCode;
-use http::Uri;
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{header, Body, Method, Request, Response, Server};
+use http::{StatusCode, Uri};
+use http_body_util::{combinators::BoxBody, BodyExt};
+use http_body_util::{Empty, StreamBody};
+use hyper::body::{Bytes, Frame, Incoming};
+use hyper::header::{self, HeaderMap, HeaderValue};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::Method;
+use hyper::{Request, Response};
+use hyper_util::rt::TokioIo;
 use log::{debug, error, info, trace, warn};
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
@@ -20,7 +25,8 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tokio::fs::File;
-use tokio_util::codec::{BytesCodec, FramedRead};
+use tokio::net::TcpListener;
+use tokio_util::io::ReaderStream;
 
 // Developer extensions. These are contained in their own module so that the
 // principle HTTP server behavior is not obscured.
@@ -86,39 +92,34 @@ async fn run() -> Result<()> {
     info!("root dir: {}", config.root_dir.display());
     info!("extensions: {}", config.use_extensions);
 
-    // Create the MakeService object that creates a new Hyper service for every
-    // connection. Both these closures need to return a Future of Result, and we
-    // use two different mechanisms to achieve that.
-    let make_service = make_service_fn(|_| {
-        let config = config.clone();
-
-        let service = service_fn(move |req| {
-            let config = config.clone();
-
-            // Handle the request, returning a Future of Response,
-            // and map it to a Future of Result of Response.
-            futures::FutureExt::map(serve(config, req), Ok::<_, Error>)
-        });
-
-        // Convert the concrete (non-future) service function to a Future of Result.
-        future::ok::<_, Error>(service)
-    });
-
     // Create a Hyper Server, binding to an address, and use
     // our service builder.
-    let server = Server::bind(&config.addr).serve(make_service);
+    let listener = TcpListener::bind(&config.addr).await?;
 
-    // And run forever...
-    server.await?;
+    loop {
+        let (stream, _) = listener.accept().await?;
 
-    Ok(())
+        let io = TokioIo::new(stream);
+
+        let config = config.clone();
+        let service = service_fn(move |req| {
+            let config = config.clone();
+            async move { Ok::<_, Error>(serve(config, req).await) }
+        });
+
+        tokio::task::spawn(async move {
+            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                error!("Error serving connection: {:?}", err);
+            }
+        });
+    }
 }
 
 /// Create an HTTP Response future for each Request.
 ///
 /// Errors are turned into an appropriate HTTP error response, and never
 /// propagated upward for hyper to deal with.
-async fn serve(config: Config, req: Request<Body>) -> Response<Body> {
+async fn serve(config: Config, req: Request<Incoming>) -> Response<BoxBody<Bytes, Error>> {
     // Serve the requested file.
     let resp = serve_or_error(config, req).await;
 
@@ -128,7 +129,10 @@ async fn serve(config: Config, req: Request<Body>) -> Response<Body> {
 
 /// Handle all types of requests, but don't deal with transforming internal
 /// errors to HTTP error responses.
-async fn serve_or_error(config: Config, req: Request<Body>) -> Result<Response<Body>> {
+async fn serve_or_error(
+    config: Config,
+    req: Request<Incoming>,
+) -> Result<Response<BoxBody<Bytes, Error>>> {
     // This server only supports the GET method. Return an appropriate
     // response otherwise.
     if let Some(resp) = handle_unsupported_request(&req) {
@@ -143,7 +147,10 @@ async fn serve_or_error(config: Config, req: Request<Body>) -> Result<Response<B
 }
 
 /// Serve static files from a root directory.
-async fn serve_file(req: &Request<Body>, root_dir: &Path) -> Result<Response<Body>> {
+async fn serve_file(
+    req: &Request<Incoming>,
+    root_dir: &Path,
+) -> Result<Response<BoxBody<Bytes, Error>>> {
     // First, try to do a redirect. If that doesn't happen, then find the path
     // to the static file we want to serve - which may be `index.html` for
     // directories - and send a response containing that file.
@@ -173,7 +180,10 @@ async fn serve_file(req: &Request<Body>, root_dir: &Path) -> Result<Response<Bod
 /// the case for URL `docs/`.
 ///
 /// This seems to match the behavior of other static web servers.
-fn try_dir_redirect(req: &Request<Body>, root_dir: &Path) -> Result<Option<Response<Body>>> {
+fn try_dir_redirect(
+    req: &Request<Incoming>,
+    root_dir: &Path,
+) -> Result<Option<Response<BoxBody<Bytes, Error>>>> {
     if req.uri().path().ends_with('/') {
         return Ok(None);
     }
@@ -197,7 +207,11 @@ fn try_dir_redirect(req: &Request<Body>, root_dir: &Path) -> Result<Option<Respo
     Response::builder()
         .status(StatusCode::FOUND)
         .header(header::LOCATION, new_loc)
-        .body(Body::empty())
+        .body(
+            Empty::<Bytes>::new()
+                .map_err(|never| match never {})
+                .boxed(),
+        )
         .map(Some)
         .map_err(Error::from)
 }
@@ -207,7 +221,7 @@ fn try_dir_redirect(req: &Request<Body>, root_dir: &Path) -> Result<Option<Respo
 ///
 /// If the I/O here fails then an error future will be returned, and `serve`
 /// will convert it into the appropriate HTTP error response.
-async fn respond_with_file(path: PathBuf) -> Result<Response<Body>> {
+async fn respond_with_file(path: PathBuf) -> Result<Response<BoxBody<Bytes, Error>>> {
     let mime_type = file_path_mime(&path);
 
     let file = File::open(path).await?;
@@ -215,22 +229,15 @@ async fn respond_with_file(path: PathBuf) -> Result<Response<Body>> {
     let meta = file.metadata().await?;
     let len = meta.len();
 
-    // Here's the streaming code. How to do this isn't documented in the
-    // Tokio/Hyper API docs. Codecs are how Tokio creates Streams; a FramedRead
-    // turns an AsyncRead plus a Decoder into a Stream; and BytesCodec is a
-    // Decoder. FramedRead though creates a Stream<Result<BytesMut>> and Hyper's
-    // Body wants a Stream<Result<Bytes>>, and BytesMut::freeze will give us a
-    // Bytes.
-
-    let codec = BytesCodec::new();
-    let stream = FramedRead::new(file, codec);
-    let body = Body::wrap_stream(stream);
+    let reader_stream = ReaderStream::new(file);
+    let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data).map_err(Error::Io));
+    let boxed_body = stream_body.boxed();
 
     let resp = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_LENGTH, len)
         .header(header::CONTENT_TYPE, mime_type.as_ref())
-        .body(body)?;
+        .body(boxed_body)?;
 
     Ok(resp)
 }
@@ -293,7 +300,9 @@ fn local_path_for_request(uri: &Uri, root_dir: &Path) -> Result<PathBuf> {
 
 /// Create an error response if the request contains unsupported methods,
 /// headers, etc.
-fn handle_unsupported_request(req: &Request<Body>) -> Option<Result<Response<Body>>> {
+fn handle_unsupported_request(
+    req: &Request<Incoming>,
+) -> Option<Result<Response<BoxBody<Bytes, Error>>>> {
     get_unsupported_request_message(req)
         .map(|unsup| make_error_response_from_code_and_headers(unsup.code, unsup.headers))
 }
@@ -305,7 +314,7 @@ struct Unsupported {
 }
 
 /// Create messages for unsupported requests.
-fn get_unsupported_request_message(req: &Request<Body>) -> Option<Unsupported> {
+fn get_unsupported_request_message(req: &Request<Incoming>) -> Option<Unsupported> {
     use std::iter::FromIterator;
 
     // https://tools.ietf.org/html/rfc7231#section-6.5.5
@@ -320,7 +329,9 @@ fn get_unsupported_request_message(req: &Request<Body>) -> Option<Unsupported> {
 }
 
 /// Turn any errors into an HTTP error response.
-fn transform_error(resp: Result<Response<Body>>) -> Response<Body> {
+fn transform_error(
+    resp: Result<Response<BoxBody<Bytes, Error>>>,
+) -> Response<BoxBody<Bytes, Error>> {
     match resp {
         Ok(r) => r,
         Err(e) => {
@@ -330,7 +341,11 @@ fn transform_error(resp: Result<Response<Body>>) -> Response<Body> {
                 Err(e) => {
                     // Last-ditch error reporting if even making the error response failed.
                     error!("unexpected internal error: {}", e);
-                    Response::new(Body::from(format!("unexpected internal error: {}", e)))
+                    Response::new(
+                        format!("unexpected internal error: {}", e)
+                            .map_err(|never| match never {})
+                            .boxed(),
+                    )
                 }
             }
         }
@@ -338,7 +353,7 @@ fn transform_error(resp: Result<Response<Body>>) -> Response<Body> {
 }
 
 /// Convert an error to an HTTP error response future, with correct response code.
-fn make_error_response(e: Error) -> Result<Response<Body>> {
+fn make_error_response(e: Error) -> Result<Response<BoxBody<Bytes, Error>>> {
     let resp = match e {
         Error::Io(e) => make_io_error_response(e)?,
         Error::Ext(ext::Error::Io(e)) => make_io_error_response(e)?,
@@ -348,7 +363,7 @@ fn make_error_response(e: Error) -> Result<Response<Body>> {
 }
 
 /// Convert an error into a 500 internal server error, and log it.
-fn make_internal_server_error_response(err: Error) -> Result<Response<Body>> {
+fn make_internal_server_error_response(err: Error) -> Result<Response<BoxBody<Bytes, Error>>> {
     log_error_chain(&err);
     let resp = make_error_response_from_code(StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(resp)
@@ -356,7 +371,7 @@ fn make_internal_server_error_response(err: Error) -> Result<Response<Body>> {
 
 /// Handle the one special IO error (file not found) by returning a 404, otherwise
 /// return a 500.
-fn make_io_error_response(error: io::Error) -> Result<Response<Body>> {
+fn make_io_error_response(error: io::Error) -> Result<Response<BoxBody<Bytes, Error>>> {
     let resp = match error.kind() {
         io::ErrorKind::NotFound => {
             debug!("{}", error);
@@ -368,7 +383,7 @@ fn make_io_error_response(error: io::Error) -> Result<Response<Body>> {
 }
 
 /// Make an error response given an HTTP status code.
-fn make_error_response_from_code(status: StatusCode) -> Result<Response<Body>> {
+fn make_error_response_from_code(status: StatusCode) -> Result<Response<BoxBody<Bytes, Error>>> {
     make_error_response_from_code_and_headers(status, HeaderMap::new())
 }
 
@@ -376,14 +391,17 @@ fn make_error_response_from_code(status: StatusCode) -> Result<Response<Body>> {
 fn make_error_response_from_code_and_headers(
     status: StatusCode,
     headers: HeaderMap,
-) -> Result<Response<Body>> {
+) -> Result<Response<BoxBody<Bytes, Error>>> {
     let body = render_error_html(status)?;
     let resp = html_str_to_response_with_headers(body, status, headers)?;
     Ok(resp)
 }
 
 /// Make an HTTP response from a HTML string.
-fn html_str_to_response(body: String, status: StatusCode) -> Result<Response<Body>> {
+fn html_str_to_response(
+    body: String,
+    status: StatusCode,
+) -> Result<Response<BoxBody<Bytes, Error>>> {
     html_str_to_response_with_headers(body, status, HeaderMap::new())
 }
 
@@ -392,7 +410,7 @@ fn html_str_to_response_with_headers(
     body: String,
     status: StatusCode,
     headers: HeaderMap,
-) -> Result<Response<Body>> {
+) -> Result<Response<BoxBody<Bytes, Error>>> {
     let mut builder = Response::builder();
 
     if let Some(h) = builder.headers_mut() {
@@ -403,7 +421,7 @@ fn html_str_to_response_with_headers(
         .status(status)
         .header(header::CONTENT_LENGTH, body.len())
         .header(header::CONTENT_TYPE, mime::TEXT_HTML.as_ref())
-        .body(Body::from(body))
+        .body(body.map_err(|never| match never {}).boxed())
         .map_err(Error::from)
 }
 
