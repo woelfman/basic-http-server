@@ -315,8 +315,6 @@ struct Unsupported {
 
 /// Create messages for unsupported requests.
 fn get_unsupported_request_message(req: &Request<Incoming>) -> Option<Unsupported> {
-    use std::iter::FromIterator;
-
     // https://tools.ietf.org/html/rfc7231#section-6.5.5
     if req.method() != Method::GET {
         return Some(Unsupported {
