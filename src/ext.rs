@@ -86,7 +86,7 @@ async fn md_path_to_html(path: &Path) -> Result<Response<BoxBody<Bytes, super::E
         title: String::new(),
         body: html,
     };
-    let html = super::render_html(cfg)?;
+    let html = super::render_html(&cfg)?;
 
     Response::builder()
         .status(StatusCode::OK)
@@ -230,7 +230,7 @@ fn make_dir_list_body(root_dir: &Path, paths: &[PathBuf]) -> Result<String> {
                     let full_url = utf8_percent_encode(full_url, PATH_SET);
 
                     // TODO: Make this a relative URL
-                    writeln!(buf, "<div><a href='/{}'>{}</a></div>", full_url, file_name)
+                    writeln!(buf, "<div><a href='/{full_url}'>{file_name}</a></div>")
                         .map_err(Error::WriteInDirList)?;
                 } else {
                     warn!("non-unicode url: {}", full_url.to_string_lossy());
@@ -250,7 +250,7 @@ fn make_dir_list_body(root_dir: &Path, paths: &[PathBuf]) -> Result<String> {
         body: buf,
     };
 
-    Ok(super::render_html(cfg)?)
+    Ok(super::render_html(&cfg)?)
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -280,7 +280,7 @@ pub enum Error {
 
 impl StdError for Error {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        use Error::*;
+        use Error::{Engine, Http, Io, MarkdownUtf8, StripPrefixInDirList, WriteInDirList};
 
         match self {
             Engine(e) => Some(e),

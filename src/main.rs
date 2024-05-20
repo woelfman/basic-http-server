@@ -8,13 +8,13 @@ use env_logger::{Builder, Env};
 use futures::TryStreamExt;
 use handlebars::Handlebars;
 use http::{StatusCode, Uri};
-use http_body_util::{Empty, StreamBody};
 use http_body_util::{combinators::BoxBody, BodyExt};
-use hyper::Method;
+use http_body_util::{Empty, StreamBody};
 use hyper::body::{Bytes, Frame, Incoming};
 use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
+use hyper::Method;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use log::{debug, error, info, trace, warn};
@@ -283,9 +283,7 @@ fn local_path_for_request(uri: &Uri, root_dir: &Path) -> Result<PathBuf> {
 
     // Convert %-encoding to actual values
     let decoded = percent_decode_str(request_path);
-    let request_path = if let Ok(p) = decoded.decode_utf8() {
-        p
-    } else {
+    let Ok(request_path) = decoded.decode_utf8() else {
         error!("non utf-8 URL: {}", request_path);
         return Err(Error::UriNotUtf8);
     };
@@ -325,7 +323,7 @@ fn get_unsupported_request_message(req: &Request<Incoming>) -> Option<Unsupporte
     if req.method() != Method::GET {
         return Some(Unsupported {
             code: StatusCode::METHOD_NOT_ALLOWED,
-            headers: HeaderMap::from_iter(vec![(header::ALLOW, HeaderValue::from_static("GET"))]),
+            headers: HeaderMap::from_iter([(header::ALLOW, HeaderValue::from_static("GET"))]),
         });
     }
 
@@ -346,7 +344,7 @@ fn transform_error(
                     // Last-ditch error reporting if even making the error response failed.
                     error!("unexpected internal error: {}", e);
                     Response::new(
-                        format!("unexpected internal error: {}", e)
+                        format!("unexpected internal error: {e}")
                             .map_err(|never| match never {})
                             .boxed(),
                     )
@@ -418,7 +416,7 @@ fn html_str_to_response_with_headers(
     let mut builder = Response::builder();
 
     if let Some(h) = builder.headers_mut() {
-        h.extend(headers)
+        h.extend(headers);
     }
 
     builder
@@ -441,7 +439,7 @@ struct HtmlCfg {
 }
 
 /// Render an HTML page with handlebars, the template and the configuration data.
-fn render_html(cfg: HtmlCfg) -> Result<String> {
+fn render_html(cfg: &HtmlCfg) -> Result<String> {
     let reg = Handlebars::new();
     let rendered = reg
         .render_template(HTML_TEMPLATE, &cfg)
@@ -451,8 +449,8 @@ fn render_html(cfg: HtmlCfg) -> Result<String> {
 
 /// Render an HTML page from an HTTP status code
 fn render_error_html(status: StatusCode) -> Result<String> {
-    render_html(HtmlCfg {
-        title: format!("{}", status),
+    render_html(&HtmlCfg {
+        title: format!("{status}"),
         body: String::new(),
     })
 }
@@ -509,7 +507,7 @@ pub enum Error {
 
 impl StdError for Error {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        use Error::*;
+        use Error::{AddrParse, Ext, Http, Hyper, Io, TemplateRender, UriNotAbsolute, UriNotUtf8};
 
         match self {
             Ext(e) => Some(e),
@@ -518,8 +516,7 @@ impl StdError for Error {
             Hyper(e) => Some(e),
             AddrParse(e) => Some(e),
             TemplateRender(e) => Some(e),
-            UriNotAbsolute => None,
-            UriNotUtf8 => None,
+            UriNotAbsolute | UriNotUtf8 => None,
         }
     }
 }
