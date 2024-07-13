@@ -6,6 +6,7 @@
 use super::{Config, HtmlCfg};
 use comrak::Options;
 
+use crate::error::{Error, Result};
 use http::StatusCode;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
@@ -14,7 +15,6 @@ use hyper::header;
 use hyper::{Request, Response};
 use log::{trace, warn};
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
-use std::error::Error as StdError;
 use std::ffi::OsStr;
 use std::fmt::Write;
 use std::io;
@@ -26,8 +26,8 @@ use std::path::{Path, PathBuf};
 pub async fn serve(
     config: Config,
     req: Request<Incoming>,
-    resp: super::Result<Response<BoxBody<Bytes, super::Error>>>,
-) -> super::Result<Response<BoxBody<Bytes, super::Error>>> {
+    resp: Result<Response<BoxBody<Bytes, Error>>>,
+) -> Result<Response<BoxBody<Bytes, Error>>> {
     trace!("checking extensions");
 
     if !config.use_extensions {
@@ -39,7 +39,7 @@ pub async fn serve(
 
     if file_ext == "md" {
         trace!("using markdown extension");
-        return Ok(md_path_to_html(&path).await?);
+        return md_path_to_html(&path).await;
     }
 
     match resp {
@@ -48,7 +48,7 @@ pub async fn serve(
             maybe_convert_mime_type_to_text(&req, &mut resp);
             Ok(resp)
         }
-        Err(super::Error::Io(e)) => {
+        Err(Error::Io(e)) => {
             // If the requested file was not found, then try doing a directory listing.
             if e.kind() == io::ErrorKind::NotFound {
                 let list_dir_resp = maybe_list_dir(&config.root_dir, &path).await?;
@@ -56,10 +56,10 @@ pub async fn serve(
                 if let Some(f) = list_dir_resp {
                     Ok(f)
                 } else {
-                    Err(super::Error::from(e))
+                    Err(Error::from(e))
                 }
             } else {
-                Err(super::Error::from(e))
+                Err(Error::from(e))
             }
         }
         r => r,
@@ -67,7 +67,7 @@ pub async fn serve(
 }
 
 /// Load a markdown file, render to HTML, and return the response.
-async fn md_path_to_html(path: &Path) -> Result<Response<BoxBody<Bytes, super::Error>>> {
+async fn md_path_to_html(path: &Path) -> Result<Response<BoxBody<Bytes, Error>>> {
     // Render Markdown like GitHub
     let buf = tokio::fs::read(path).await?;
     let s = String::from_utf8(buf).map_err(|_| Error::MarkdownUtf8)?;
@@ -100,7 +100,7 @@ async fn md_path_to_html(path: &Path) -> Result<Response<BoxBody<Bytes, super::E
 
 fn maybe_convert_mime_type_to_text(
     req: &Request<Incoming>,
-    resp: &mut Response<BoxBody<Bytes, super::Error>>,
+    resp: &mut Response<BoxBody<Bytes, Error>>,
 ) {
     let path = req.uri().path();
     let file_name = path.rsplit('/').next();
@@ -170,7 +170,7 @@ static TEXT_FILES: &[&str] = &[
 async fn maybe_list_dir(
     root_dir: &Path,
     path: &Path,
-) -> Result<Option<Response<BoxBody<Bytes, super::Error>>>> {
+) -> Result<Option<Response<BoxBody<Bytes, Error>>>> {
     let meta = tokio::fs::metadata(path).await?;
     if meta.is_dir() {
         Ok(Some(list_dir(root_dir, path).await?))
@@ -180,7 +180,7 @@ async fn maybe_list_dir(
 }
 
 /// List the contents of a directory as HTML.
-async fn list_dir(root_dir: &Path, path: &Path) -> Result<Response<BoxBody<Bytes, super::Error>>> {
+async fn list_dir(root_dir: &Path, path: &Path) -> Result<Response<BoxBody<Bytes, Error>>> {
     let up_dir = path.join("..");
     let path = path.to_owned();
     let mut dents = tokio::fs::read_dir(path).await?;
@@ -248,63 +248,5 @@ fn make_dir_list_body(root_dir: &Path, paths: &[PathBuf]) -> Result<String> {
         body: buf,
     };
 
-    Ok(super::render_html(&cfg)?)
-}
-
-pub type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Debug, Display)]
-pub enum Error {
-    // blanket "pass-through" error types
-    #[display(fmt = "engine error")]
-    Engine(Box<super::Error>),
-
-    #[display(fmt = "HTTP error")]
-    Http(http::Error),
-
-    #[display(fmt = "I/O error")]
-    Io(io::Error),
-
-    // custom "semantic" error types
-    #[display(fmt = "markdown is not UTF-8")]
-    MarkdownUtf8,
-
-    #[display(fmt = "failed to strip prefix in directory listing")]
-    StripPrefixInDirList(std::path::StripPrefixError),
-
-    #[display(fmt = "formatting error while creating directory listing")]
-    WriteInDirList(std::fmt::Error),
-}
-
-impl StdError for Error {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        use Error::{Engine, Http, Io, MarkdownUtf8, StripPrefixInDirList, WriteInDirList};
-
-        match self {
-            Engine(e) => Some(e),
-            Io(e) => Some(e),
-            Http(e) => Some(e),
-            MarkdownUtf8 => None,
-            StripPrefixInDirList(e) => Some(e),
-            WriteInDirList(e) => Some(e),
-        }
-    }
-}
-
-impl From<super::Error> for Error {
-    fn from(e: super::Error) -> Error {
-        Error::Engine(Box::new(e))
-    }
-}
-
-impl From<http::Error> for Error {
-    fn from(e: http::Error) -> Error {
-        Error::Http(e)
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(e: io::Error) -> Error {
-        Error::Io(e)
-    }
+    super::render_html(&cfg)
 }

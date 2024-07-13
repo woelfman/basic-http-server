@@ -1,10 +1,8 @@
 //! A simple HTTP server, for learning and local development.
 
-#[macro_use]
-extern crate derive_more;
-
 use clap::Parser;
 use env_logger::{Builder, Env};
+use error::{Error, Result};
 use futures::TryStreamExt;
 use handlebars::Handlebars;
 use http::{StatusCode, Uri};
@@ -29,6 +27,7 @@ use tokio::net::TcpListener;
 use tokio::signal;
 use tokio_util::io::ReaderStream;
 
+mod error;
 // Developer extensions. These are contained in their own module so that the
 // principle HTTP server behavior is not obscured.
 mod ext;
@@ -358,7 +357,6 @@ fn transform_error(
 fn make_error_response(e: Error) -> Result<Response<BoxBody<Bytes, Error>>> {
     let resp = match e {
         Error::Io(e) => make_io_error_response(e)?,
-        Error::Ext(ext::Error::Io(e)) => make_io_error_response(e)?,
         e => make_internal_server_error_response(e)?,
     };
     Ok(resp)
@@ -453,94 +451,4 @@ fn render_error_html(status: StatusCode) -> Result<String> {
         title: format!("{status}"),
         body: String::new(),
     })
-}
-
-/// A custom `Result` typedef
-pub type Result<T> = std::result::Result<T, Error>;
-
-/// The basic-http-server error type.
-///
-/// This is divided into two types of errors: "semantic" errors and "blanket"
-/// errors. Semantic errors are custom to the local application semantics and
-/// are usually preferred, since they add context and meaning to the error
-/// chain. They don't require boilerplate `From` implementations, but do require
-/// `map_err` to create when they have interior `causes`.
-///
-/// Blanket errors are just wrappers around other types, like `Io(io::Error)`.
-/// These are common errors that occur in many places so are easier to code and
-/// maintain, since e.g. every occurrence of an I/O error doesn't need to be
-/// given local semantics.
-///
-/// The criteria of when to use which type of error variant, and their pros and
-/// cons, aren't obvious.
-///
-/// These errors use `derive(Display)` from the `derive-more` crate to reduce
-/// boilerplate.
-#[derive(Debug, Display)]
-pub enum Error {
-    // blanket "pass-through" error types
-    #[display(fmt = "Extension error")]
-    Ext(ext::Error),
-
-    #[display(fmt = "HTTP error")]
-    Http(http::Error),
-
-    #[display(fmt = "Hyper error")]
-    Hyper(hyper::Error),
-
-    #[display(fmt = "I/O error")]
-    Io(io::Error),
-
-    // custom "semantic" error types
-    #[display(fmt = "failed to parse IP address")]
-    AddrParse(std::net::AddrParseError),
-
-    #[display(fmt = "failed to render template")]
-    TemplateRender(handlebars::RenderError),
-
-    #[display(fmt = "requested URI is not an absolute path")]
-    UriNotAbsolute,
-
-    #[display(fmt = "requested URI is not UTF-8")]
-    UriNotUtf8,
-}
-
-impl StdError for Error {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        use Error::{AddrParse, Ext, Http, Hyper, Io, TemplateRender, UriNotAbsolute, UriNotUtf8};
-
-        match self {
-            Ext(e) => Some(e),
-            Io(e) => Some(e),
-            Http(e) => Some(e),
-            Hyper(e) => Some(e),
-            AddrParse(e) => Some(e),
-            TemplateRender(e) => Some(e),
-            UriNotAbsolute | UriNotUtf8 => None,
-        }
-    }
-}
-
-impl From<ext::Error> for Error {
-    fn from(e: ext::Error) -> Error {
-        Error::Ext(e)
-    }
-}
-
-impl From<http::Error> for Error {
-    fn from(e: http::Error) -> Error {
-        Error::Http(e)
-    }
-}
-
-impl From<hyper::Error> for Error {
-    fn from(e: hyper::Error) -> Error {
-        Error::Hyper(e)
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(e: io::Error) -> Error {
-        Error::Io(e)
-    }
 }
