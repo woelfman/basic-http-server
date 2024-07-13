@@ -12,7 +12,7 @@ edition = "2021"
 [dependencies]
 bytes = "1.2.1"
 clap = { version = "4.0.0", features = ["derive"] }
-comrak = "0.24"
+comrak = "0.26"
 derive_more = "0.99.17"
 env_logger = "0.11"
 futures = "0.3.24"
