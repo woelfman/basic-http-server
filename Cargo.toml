@@ -16,7 +16,7 @@ comrak = "0.26"
 derive_more = { version = "1.0.0-beta.6", features = ["display", "from"] }
 env_logger = "0.11"
 futures = "0.3.24"
-handlebars = "5"
+handlebars = "6"
 http = "1.1.0"
 http-body-util = "0.1.1"
 hyper = { version = "1.2.0", features = ["full"] }
