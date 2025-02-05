@@ -1,5 +1,3 @@
-use derive_more::{Display, From};
-
 /// A custom `Result` typedef
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -18,45 +16,36 @@ pub type Result<T> = std::result::Result<T, Error>;
 ///
 /// The criteria of when to use which type of error variant, and their pros and
 /// cons, aren't obvious.
-///
-/// These errors use `derive(Display)` from the `derive-more` crate to reduce
-/// boilerplate.
-#[derive(Debug, Display, From)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
-    // blanket "pass-through" error types
-    #[display("engine error")]
-    Engine(Box<Error>),
+    #[error("HTTP error: {0}")]
+    Http(#[from] http::Error),
 
-    #[display("HTTP error")]
-    Http(http::Error),
+    #[error("Hyper error: {0}")]
+    Hyper(#[from] hyper::Error),
 
-    #[display("Hyper error")]
-    Hyper(hyper::Error),
-
-    #[display("I/O error")]
-    Io(std::io::Error),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
 
     // custom "semantic" error types
-    #[display("failed to parse IP address")]
-    AddrParse(std::net::AddrParseError),
+    #[error("failed to parse IP address: {0}")]
+    AddrParse(#[from] std::net::AddrParseError),
 
-    #[display("markdown is not UTF-8")]
+    #[error("markdown is not UTF-8")]
     MarkdownUtf8,
 
-    #[display("failed to strip prefix in directory listing")]
-    StripPrefixInDirList(std::path::StripPrefixError),
+    #[error("failed to strip prefix in directory listing: {0}")]
+    StripPrefixInDirList(#[from] std::path::StripPrefixError),
 
-    #[display("failed to render template")]
-    TemplateRender(handlebars::RenderError),
+    #[error("failed to render template: {0}")]
+    TemplateRender(#[from] handlebars::RenderError),
 
-    #[display("requested URI is not an absolute path")]
+    #[error("requested URI is not an absolute path")]
     UriNotAbsolute,
 
-    #[display("requested URI is not UTF-8")]
+    #[error("requested URI is not UTF-8")]
     UriNotUtf8,
 
-    #[display("formatting error while creating directory listing")]
-    WriteInDirList(std::fmt::Error),
+    #[error("formatting error while creating directory listing: {0}")]
+    WriteInDirList(#[from] std::fmt::Error),
 }
-
-impl std::error::Error for Error {}
