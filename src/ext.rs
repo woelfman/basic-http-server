@@ -53,11 +53,11 @@ pub async fn serve(
             if e.kind() == io::ErrorKind::NotFound {
                 let list_dir_resp = maybe_list_dir(&config.root_dir, &path).await?;
                 trace!("using directory list extension");
-                if let Some(f) = list_dir_resp {
+                match list_dir_resp { Some(f) => {
                     Ok(f)
-                } else {
+                } _ => {
                     Err(Error::from(e))
-                }
+                }}
             } else {
                 Err(Error::from(e))
             }
